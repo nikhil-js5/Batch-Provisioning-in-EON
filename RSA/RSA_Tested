@@ -1,0 +1,310 @@
+#include <iostream>
+#include <vector>
+#include <array>
+#include <queue>
+#include <limits>
+#include <functional>
+#include <algorithm>
+#include <ctime>   // for srand()
+using namespace std;
+
+const int num_nodes = 5;
+int MAX_SLOTS = 10; // Initialize network slots as all free
+using AdjacencyMatrix = std::vector<std::vector<int>>;
+class LightpathRequest;
+
+AdjacencyMatrix initializeSlotMatrix(const AdjacencyMatrix& network, int max_slots) {
+    AdjacencyMatrix slots(network.size(), std::vector<int>(network.size(), -1));
+    for (int i = 0; i < network.size(); i++) {
+        for (int j = 0; j < network[i].size(); j++) {
+            if (network[i][j] != 0) {
+                slots[i][j] = max_slots;  // Set the maximum number of slots for each link
+            }
+        }
+    }
+    return slots;
+}
+
+
+std::vector<LightpathRequest> generateLightpathRequests(int num_nodes, int numRequests);
+std::vector<std::vector<LightpathRequest>> batchFormation(const std::vector<LightpathRequest>& superSet, int batchCapacity);
+
+// Function to check for available contiguous slots on the path
+bool checkContiguousSlots(const std::vector<int>& path, int slotsRequired, const std::vector<std::vector<int>>& network, AdjacencyMatrix& slots);
+//Dijkstra Shortest path algorithm
+std::vector<int> findShortestPath(int source, int target, const AdjacencyMatrix& network);
+// Assigning the slots
+bool assignSlotsToRequest(const std::vector<int>& path, int slotsRequired, std::vector<std::vector<int>>& network, AdjacencyMatrix& slots) ;
+// SPFF Algorithm - Assigns the first available contiguous block of spectrum slots to the request
+bool SPFF_Algorithm(int sourceNode, int destinationNode, int slotsRequired, AdjacencyMatrix& network, AdjacencyMatrix& slots) ;
+
+//
+class LightpathRequest {
+    public:
+    int getId() const {
+        return id;
+        }
+    int getSourceNode() const {
+        return sourceNode;
+        }
+    int getDestinationNode() const {
+        return destinationNode;
+        }
+    int getSlotsRequired() const {
+        return slotsRequired;
+        }
+    int getNumHops() const {
+        return numHops;
+        }
+    bool isConnectionPossible() const {
+        return connectionPossible;
+        }
+    void setId(int newId) {
+        id = newId;
+        }
+    void setSourceNode(int newSourceNode) {
+        sourceNode = newSourceNode;
+        }
+    void setDestinationNode(int newDestinationNode) {
+        destinationNode = newDestinationNode;
+        }
+    void setSlotsRequired(int newSlotsRequired) {
+        slotsRequired = newSlotsRequired;
+        }
+    void setNumHops(int newNumHops) {
+        numHops = newNumHops;
+        }
+    void setConnectionPossible(bool newConnectionPossible) {
+        connectionPossible = newConnectionPossible;
+        }
+public:
+    // Public member functions and data members
+    int id;
+    int sourceNode;
+    int destinationNode;
+    int slotsRequired;
+    int numHops;
+    bool connectionPossible;
+
+    LightpathRequest() : id(0), sourceNode(0), destinationNode(0),
+                         slotsRequired(0), numHops(0), connectionPossible(true) {}
+
+    /*bool operator<(const LightpathRequest& rhs) const {
+        // Prioritize by least number of hops and then by fewest slots required
+        return (numHops < rhs.numHops) || (numHops == rhs.numHops && slotsRequired < rhs.slotsRequired);
+    }*/
+};
+
+void printSlots(const AdjacencyMatrix& network, const AdjacencyMatrix& slots) {
+    cout << "\nSlots status:" << endl;
+    for (int i = 0; i < network.size(); ++i) {
+        for (int j = 0; j < network[i].size(); ++j) {
+            if (network[i][j] != 0) {  // There is a link between node i and node j
+                cout << "Edge " << i + 1 << " -> " << j + 1 << ": ";
+                if (slots[i][j] >= 0) {  // Check if slots are initialized for this edge
+                    cout << slots[i][j] << " slots available" << endl;
+                } else {
+                    cout << "No slots available (unconnected)" << endl;
+                }
+            }
+        }
+    }
+}
+
+
+
+std::vector<LightpathRequest> generateLightpathRequests(int num_nodes, int numRequests) {
+    std::vector<LightpathRequest> requests;
+    for (int i = 0; i < numRequests; ++i) {
+        LightpathRequest req;
+        req.id = i + 1;
+        req.sourceNode = rand() % num_nodes + 1; // Generate random Src node
+        do {
+            req.destinationNode = rand() % num_nodes + 1;  // Generate random destination node
+        } while (req.destinationNode == req.sourceNode);  // Ensure source and destination are not the same
+
+
+        req.slotsRequired = rand() % 10 + 1; // Random slots required, max 320
+       // req.numHops = rand() % 10 + 1;  // Random number of hops, for example purposes
+        requests.push_back(req);
+    }
+    // Print the generated lightpath requests
+    cout << "\nGenerated Lightpath Requests:" << endl;
+    for (const auto& request : requests) {
+        cout << "ID: " << request.getId() << ", Source: " << request.getSourceNode()
+             << ", Destination: " << request.getDestinationNode() << ", Slots Req:   " << request.getSlotsRequired()
+             << ",   No. of Hops: " << request.getNumHops()  << endl;
+    }
+    return requests;
+}
+
+
+std::vector<int> findShortestPath(int source, int target, const AdjacencyMatrix& network) {
+    std::vector<int> dist(num_nodes, std::numeric_limits<int>::max());
+    std::vector<int> prev(num_nodes, -1);
+    std::vector<bool> visited(num_nodes, false);
+
+    using pii = std::pair<int, int>;
+    std::priority_queue<pii, std::vector<pii>, std::greater<pii>> queue;
+
+    dist[source] = 0;
+    queue.push({0, source});
+
+    while (!queue.empty()) {
+        int distance = queue.top().first;
+        int current = queue.top().second;
+        queue.pop();
+
+        if (visited[current]) continue;
+        visited[current] = true;
+
+        for (int i = 0; i < num_nodes; ++i) {
+            if (network[current][i] && !visited[i]) {
+                int newDist = distance + 1;  // Assuming each edge has a weight of 1
+                if (newDist < dist[i]) {
+                    dist[i] = newDist;
+                    prev[i] = current;
+                    queue.push({newDist, i});
+                }
+            }
+        }
+    }
+
+    // Reconstruct the shortest path from source to target
+    std::vector<int> path;
+    if (dist[target] == std::numeric_limits<int>::max()) {
+        return path; // No path exists
+    }
+    for (int at = target; at != -1; at = prev[at]) {
+        path.push_back(at);
+    }
+    std::reverse(path.begin(), path.end());
+    return path;
+}
+
+
+bool checkContiguousSlots(const std::vector<int>& path, int slotsRequired, const AdjacencyMatrix& network, AdjacencyMatrix& slots) {
+    // Assume all edges in the path have at least the required slots available
+    for (size_t i = 0; i < path.size() - 1; i++) {
+        int startNode = path[i];
+        int endNode = path[i + 1];
+        if (slots[startNode][endNode] < slotsRequired) {
+            return false;  // Not enough slots available on this edge
+        }
+    }
+    return true;  // Sufficient contiguous slots available on all edges
+}
+
+bool assignSlotsToRequest(const std::vector<int>& path, int slotsRequired, AdjacencyMatrix& network, AdjacencyMatrix& slots) {
+    if (checkContiguousSlots(path, slotsRequired, network, slots)) {
+        for (size_t i = 0; i < path.size() - 1; i++) {
+            int startNode = path[i];
+            int endNode = path[i + 1];
+            slots[startNode][endNode] -= slotsRequired;  // Reduce available slots by the amount required
+        }
+        return true;
+    }
+    return false;  // Not enough contiguous slots were found for this request
+}
+
+
+// SPFF Algorithm - Assigns the first available contiguous block of spectrum slots to the request
+/*bool SPFF_Algorithm(int sourceNode, int destinationNode, int slotsRequired, AdjacencyMatrix& network, AdjacencyMatrix& slots) {
+    // Find the shortest path between source and destination
+    std::vector<int> path = findShortestPath(sourceNode, destinationNode, network);
+
+    // Check for available contiguous slots on the path
+    if (!path.empty()) {
+        if (checkContiguousSlots(path, slotsRequired, network, slots)) {
+            // Assign the slots
+            // Note: Here we need to actually assign the slots to the request in the 'network' data structure.
+            // This implementation assumes that a function will assign the slots.
+            assignSlotsToRequest(path, slotsRequired, network, slots);
+
+            return true;
+        }
+    }
+    return false; // Request is blocked if there are no contiguous slots
+}*/
+// SPFF Algorithm - Assigns the first available contiguous block of spectrum slots to the request
+bool SPFF_Algorithm(int sourceNode, int destinationNode, int slotsRequired, AdjacencyMatrix& network, AdjacencyMatrix& slots) {
+    // Find the shortest path between source and destination
+    std::vector<int> path = findShortestPath(sourceNode, destinationNode, network);
+    for(int i=0;i < path.size() ; i++){
+        std::cout << path[i] +1 << " ->";
+    }
+    cout << endl;
+
+    // Check for available contiguous slots on the path
+    if (!path.empty() && checkContiguousSlots(path, slotsRequired, network, slots)) {
+        // Assign the slots if contiguous slots are available
+        return assignSlotsToRequest(path, slotsRequired, network, slots);
+    }
+
+    // If there's no path or not enough contiguous slots, return false indicating the request is blocked
+    return false;
+}
+
+
+int main() {
+    // Seeding the random number generator with current time
+    std::srand(static_cast<unsigned int>(std::time(nullptr)));
+   // std::srand(123); // fixed seed value
+
+    int numRequests = 5;
+    /*AdjacencyMatrix network = {{
+        {0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 1, 1},
+        {1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 1},
+        {0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 1, 1, 0},
+        {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 0, 0},
+        {0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 1, 0, 0, 1},
+        {0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 0, 1, 0, 0},
+        {1, 0, 0, 0, 0, 0, 0, 0, 1, 1, 0, 0, 0, 0},
+        {0, 0, 1, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0},
+        {0, 0, 0, 0, 0, 1, 1, 0, 0, 0, 1, 0, 0, 0},
+        {0, 0, 0, 0, 0, 1, 1, 0, 0, 0, 0, 0, 0, 0},
+        {0, 0, 0, 1, 1, 0, 0, 0, 1, 0, 0, 0, 0, 0},
+        {0, 1, 1, 1, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0},
+        {1, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0},
+        {1, 1, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0}
+    }};*/
+    AdjacencyMatrix network = {
+        {0,1,1,1,0},
+        {1,0,1,0,0},
+        {1,1,0,1,1},
+        {1,0,1,0,0},
+        {0,0,1,0,0},
+    };
+
+    // Generate lightpath requests
+    std::vector<LightpathRequest> lightpathRequests = generateLightpathRequests(num_nodes, numRequests);
+
+
+    //std::vector<std::vector<int>> slots(num_nodes, std::vector<int>(MAX_SLOTS, 0));
+    //AdjacencyMatrix slots(num_nodes, std::vector<int>(MAX_SLOTS, 0));
+    AdjacencyMatrix slots = initializeSlotMatrix(network, MAX_SLOTS);
+
+    int totalBlocked = 0, ServedRequests =0;
+    int totalRequests = lightpathRequests.size();
+
+    // Check each lightpath request for available slots and blocking
+    for (const auto& request : lightpathRequests) {
+        bool slotsAssigned = SPFF_Algorithm(request.getSourceNode() -1, request.getDestinationNode() -1, request.getSlotsRequired(), network, slots);
+        printSlots(network, slots);
+        if (slotsAssigned) {
+            // Slots are available, request is not blocked
+            ++ServedRequests;
+            cout << "served request : " << request.id << endl;
+        } else {
+            // No slots available, increment blocked requests count
+            ++totalBlocked;
+            cout << " rejected request : " << request.id  << endl ;
+        }
+    }
+    // Compute and display the blocking probability
+    double blockingProbability = static_cast<double>(totalBlocked) / totalRequests;
+    std::cout << "Served requests = " << ServedRequests << " : Blocked Requests = " << totalBlocked << std::endl;
+    std::cout << "\n\n\nBlocking Probability: " << blockingProbability << std::endl;
+
+    return 0;
+}
